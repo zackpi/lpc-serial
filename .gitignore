@@ -1,5 +1,7 @@
 bin/
+*.swp
+__pycache__/
 lib/
 share/
 pip-selfcheck.json
-
+lpcEnv/
