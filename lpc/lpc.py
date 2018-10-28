@@ -16,15 +16,19 @@ class Device:
 
     def check_blank(self):
         '''
-        command used to change baud rate
+        check if one or more sectors of on-chip flash memory are blank; blank check on sector 0
+        always fails as first 64 bytes are re-mapped to flash boot block; when crp is enabled, the
+        blank check command returns 0 for the offset and value of sectors which are not blank; blank
+        sectors are correctl reported irrespective of crp settings
  
         Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
+            start (int): the starting sector number
+            end (int): the ending sector number (start <= end)
     
         Raises:
             <Some exception if not successful>
         '''
+        #page number 431
         pass
 
     def close(self):
@@ -68,28 +72,36 @@ class Device:
 
     def erase(self):
         '''
-        command used to change baud rate
+        erases one or more sectors of on-chip flash memory; the boot block can not be erased using
+        this command; this command only allows erasure of all user sectors when code read protection
+        is enabled
  
         Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
+            start (int): the start sector number
+            end (int): the end sector number (end >= start)
     
         Raises:
             <Some exception if not successful>
         '''
+        #page number: 430
         pass
 
     def exec(self):
         '''
-        command used to change baud rate
- 
+        aka go; executes a program residing in ram or flash memory; it may not be possible to
+        return to the isp command handler once this command is successfully executed; this command
+        is blocked when code read protection is enabled; this command must be used with an address
+        of 0x0000 0200 or greater.
+
         Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
+            address (int): flash or ram address from which the code execution is to be started; this
+               address should be on a word boundary
+            mode (int): execute program in thumb mode (tf does that mean???)
     
         Raises:
             <Some exception if not successful>
         '''
+        #page number 430
         pass
 
     def prepare_write(self, start, end):
@@ -248,15 +260,21 @@ class Device:
     
     def write_to_flash(self):
         '''
-        command used to change baud rate
+        programs flash memory; the prepare_write command shuld precede this command; the affected
+        sectors are automatically protected again once the copy command is successfully executed; 
+        the boot block cannot be written by this command; this command is blocked when code read
+        protection is enabled; there are limitations specified in the pdf
  
         Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
+            flash_address (int): destination flash address where data bytes are to be written;
+                the destination address should be a 256 byte boundary
+            ram_address (int): source ram address from where data bytes are to be read
+            number_of_bytes (int): number of bytes to be written 256, 512, 1024, 4096
     
         Raises:
             <Some exception if not successful>
         '''
+        #page number 429
         pass
 
     def write_to_ram(self):
