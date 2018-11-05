@@ -4,9 +4,9 @@ from lpc.enums import ReturnCode
 class Device:
 
     def __init__(self, serial, baud, khz):
-        self.serial = Serial(serial, baud)
+        self.serial = Serial(serial, baud, timeout=1)
         self.clock = khz
-        self.eol = b"\r\n"
+        self.eol = "\r\n"
         
     def __enter__(self):
         self.sync()
@@ -44,17 +44,21 @@ class Device:
         '''
         self.serial.close()
 
-    def compare(serial):
+    def compare(address_1, address_2, size):
         '''
-        command used to change baud rate
+        compares the memory contents of two locations
  
         Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
+            address_1 (int): starting flash or ram address of data bytes to be compared.
+                should be a word boundary
+            address_2 (int): starting flash or ram address of data bytes to be compared. this
+                address should be a word boundary
+            size (int): number of bytes to be compared; should be a multiple of 4
     
         Raises:
             <Some exception if not successful>
         '''
+        #page number: 433
         pass
 
     def echo(self, on):
@@ -139,17 +143,17 @@ class Device:
         line = "".join(line.split(self.eol)[:-1])
         return line
 
-    def read_boo_code_version(serial):
+    def read_boot_code_version(serial):
         '''
-        command used to change baud rate
+        reads the boot code version number
  
-        Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
-    
+        Returns:
+            (bytes): the boot code version number
+
         Raises:
             <Some exception if not successful>
         '''
+        #page number: 433
         pass
 
     def read_memory(self):
@@ -161,6 +165,9 @@ class Device:
             start_address (int): address from where data bytes are to be read, this address
                 should be a word boundary
             number_of_bytes (int): number of bytes to be read, count should be a multiple of 4
+
+        Returns:
+            (bytes): data from memory
     
         Raises:
             <Some exception if not successful>
@@ -170,28 +177,28 @@ class Device:
 
     def read_part_id(self):
         '''
-        command used to change baud rate
- 
-        Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
-    
+        reads part identification number
+     
         Raises:
             <Some exception if not successful>
+
+        Returns:
+            (bytes) part identification number
         '''
+        #page number: 431
         pass
 
     def read_uid(self):
         '''
-        command used to change baud rate
- 
-        Args:
-            baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-            stop_bit (int): number of special bits at end of data can be 1 or 2
-    
+        reads the unique ID
+     
         Raises:
             <Some exception if not successful>
+
+        Returns:
+            (bytes) unique id of lpc
         '''
+        #page number: 434
         pass
 
     def set_baud_rate(self, baud_rate, stop_bit):
@@ -256,11 +263,11 @@ class Device:
             <Some exception if not successful>
         '''
         eol_data = f"{data}{self.eol}"
-        serial.write(eol_data.encode("UTF-8"))
+        self.serial.write(eol_data.encode("UTF-8"))
     
     def write_to_flash(self):
         '''
-        programs flash memory; the prepare_write command shuld precede this command; the affected
+        programs flash memory; the prepare_write command should precede this command; the affected
         sectors are automatically protected again once the copy command is successfully executed; 
         the boot block cannot be written by this command; this command is blocked when code read
         protection is enabled; there are limitations specified in the pdf

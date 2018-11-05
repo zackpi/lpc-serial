@@ -1,4 +1,4 @@
 from lpc.lpc import Device
 from lpc.enums import ReturnCode
 
-all = ["Device" "ReturnCode"]
+__all__ = ["Device" "ReturnCode"]
