@@ -1,17 +1,23 @@
 from serial import Serial
 from lpc.enums import ReturnCode
+from codecs import encode, decode
 
 class Device:
 
   EXEC_MODES = ["T"]
+  RAM_BEGIN = 268435456 
+  RESET_PRGM = b'\x01H\x02I\x01`\xfe\xe7\x0c\xed\x00\xe0\x04\x00\xfa\x05'
 
   def __init__(self, serial, baud, khz):
     self.serial = Serial(serial, baud, timeout=1)
-    self.clock = khz
-    self.eol = "\r\n"
+    self.baud = baud
+    self.khz = khz
+    self.eol = b"\r\n"
     
   def __enter__(self):
     self.sync()
+    self.echo(False)
+    return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
     self.close()
@@ -21,7 +27,7 @@ class Device:
     check if one or more sectors of on-chip flash memory are blank; blank check on sector 0
     always fails as first 64 bytes are re-mapped to flash boot block; when crp is enabled, the
     blank check command returns 0 for the offset and value of sectors which are not blank; blank
-    sectors are correctl reported irrespective of crp settings
+    sectors are correct reported irrespective of crp settings
 
     Args:
       start (int): the starting sector number
@@ -74,7 +80,17 @@ class Device:
       <Some exception if not successful>        
     '''
     #page number: 426
-    pass
+
+    if (on and self.echo) or (not on and not self.echo):
+      return
+
+    do_echo = b"1" if on else b"0"
+    cmd = b"A " + do_echo
+    self.serial.write(cmd + self.eol)
+
+    sol = cmd + b"\r" if self.echo else b"" 
+    assert self.serial.readline() == sol + b"0" + self.eol, "Failed to change echo settings."
+    self.echo = not self.echo
 
   def erase(self):
     '''
@@ -111,7 +127,7 @@ class Device:
     
     if address < 512:
       raise ValueError("Can not execute from address %s." % hex(address))
-    if mode not in EXEC_MODES:
+    if mode not in Device.EXEC_MODES:
       raise ValueError("Requested execution mode '%s' is not valid." % mode)
 
     self.write_command("G {address} {mode}")
@@ -132,25 +148,6 @@ class Device:
     '''
     #page number: 428
     pass
-
-  def readline(self):
-    '''
-    command used to change baud rate
-
-    Args:
-      baud_rate (int): bits per second rounded down 9600, 19200, 38400, 57600, 115200
-      stop_bit (int): number of special bits at end of data can be 1 or 2
-
-    Returns:
-      (string): the line that was read
-  
-    Raises:
-      <Some exception if not successful>
-    '''
-    raw = self.serial.readline()
-    line = raw.decode()
-    line = "".join(line.split(self.eol)[:-1])
-    return line
 
   def read_boot_code_version(serial):
     '''
@@ -195,7 +192,13 @@ class Device:
       (bytes) part identification number
     '''
     #page number: 431
-    pass
+    cmd = b"J"
+    self.serial.write(cmd + self.eol)
+
+    sol = cmd + b"\r" if self.echo else b""
+    assert self.serial.readline() == sol + b"0" + self.eol, "Unable to read part ID of target device."
+
+    return self.serial.readline() 
 
   def read_uid(self):
     '''
@@ -208,7 +211,20 @@ class Device:
       (bytes) unique id of lpc
     '''
     #page number: 434
-    pass
+    cmd = b"N"
+    self.serial.write(cmd + self.eol)
+
+    sol = cmd + b"\r" if self.echo else b""
+    assert self.serial.readline() == sol + b"0" + self.eol, "Unable to read UID of target device."
+
+    return self.serial.readline() 
+
+  def reset(self):
+    self.serial.write(b"U 23130" + self.eol)
+    self.serial.write(b"W " + str(Device.RAM_BEGIN).encode('UTF-8') + b" " + self.eol)
+    self.serial.write(b"0`4@\"20%@_N<,[0#@!`#Z!0``" + self.eol)
+    self.serial.write(b"1462" + self.eol)
+    self.serial.write(b"G " + str(Device.RAM_BEGIN).encode('UTF-8') + b" T" + self.eol)
 
   def set_baud_rate(self, baud_rate, stop_bit):
     '''
@@ -235,21 +251,18 @@ class Device:
     Raises:
       <Some exception if not successful>
     '''
-    self.serial.write(b"?") #does not have eol attached to it
 
-    if self.readline() == "Synchronized":
-      self.write_command("Synchronized")
-    else:
-      raise Exception("no response from device")
-    
-    if self.readline() == "Synchronized\rOK":
-      self.write_command(self.clock)
-    else:
-      raise Exception("synchronized failed")
+    self.serial.write(b"?")
 
-    if self.readline() == f"{self.clock}\rOK":
-      raise Exception("Failed to set clock frequency")
-    
+    assert self.serial.readline() == b"Synchronized" + self.eol, "Synchronization failed. No response from target device."
+    self.serial.write(b"Synchronized" + self.eol)
+
+    clk = str(self.khz).encode('UTF-8')   
+    assert self.serial.readline() == b"Synchronized\rOK" + self.eol, "Synchronization failed. Target aborted synchronization."
+    self.serial.write(clk + self.eol)
+
+    assert self.serial.readline() == clk + b"\rOK" + self.eol, "Failed to set clock frequency to %.3f Mhz" % (self.khz / 1000.0)
+
   def unlock(self):
     '''
     command used to unlock flash write, erase and go commands
@@ -258,7 +271,13 @@ class Device:
       <Some exception if not successful>
     '''
     #page number 426
-    pass
+    cmd = b"U 23130"
+    self.serial.write(cmd + self.eol)
+
+    sol = cmd if self.echo else b""
+    ret = self.serial.readline()
+    print("unlock", ret)
+    assert ret == sol + b"0" + self.eol, "Unable to unlock target device." 
 
   def write_command(self, data):
     '''
@@ -308,7 +327,7 @@ class Device:
       <Some exception if not successful>
     '''
     # Page Number: 427
-    if address < 268435456: # or address + len(bytes) > (limit that depends on device)	
+    if address < Device.RAM_BEGIN: # or address + len(bytes) > (limit that depends on device)	
       raise ValueError("Can't write %d bytes to RAM address %s", len(data), hex(address))
     if address % 4 > 0:
       raise ValueError("RAM write address must be at a word line (multiple of 4 bytes)")
@@ -316,8 +335,19 @@ class Device:
       raise ValueError("RAM write data must be a multiple of 4 bytes")
 
     nbytes = len(data)
-    self.write_command(f"W {address} {nbytes}")
+
+    nbytes_str = str(nbytes).encode('UTF-8')
+    addr_str = str(address).encode('UTF-8')
+    cmd = b"W " + addr_str + b" " + nbytes_str
+    self.serial.write(cmd + self.eol)
+
+    sol = cmd + b"\r" if self.echo else b""
+    ret = serial.readline()
+    print(ret)
+    assert ret == sol + "0" + self.eol, "Unable to initiate write to RAM."
+
     ret = self.readline()
+    print("stop: ", ret)
     assert int(ret) == ReturnCode.CMD_SUCCESS, "Return code was not CMD_SUCCESS"
 
     pointer = 0
