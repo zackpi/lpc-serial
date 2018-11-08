@@ -131,10 +131,8 @@ class Device:
     '''
     #page number 430
     
-    if address < 512:
-      raise ValueError("Can not execute from address %s." % hex(address))
-    if mode not in Device.EXEC_MODES:
-      raise ValueError("Requested execution mode '%s' is not valid." % mode)
+    assert address >= 512, "Can not execute from address %s." % hex(address)
+    assert mode in Device.EXEC_MODES, "Requested execution mode '%s' is not valid." % mode
 
     self.write_command("G {address} {mode}")
     # after this command, the LPC will likely no longer be in ISP mode
@@ -298,6 +296,25 @@ class Device:
       print(reply)
     assert reply == sol + b"0" + self.eol, "Unable to unlock target device." 
 
+  def uu_encode(self, seq):
+    length = chr(len(seq) + 32)
+    code = [length]
+
+    i = 0
+    for triplet in seq[i:min(len(seq),i+3)]:
+      if len(triplet) == 1:
+        triplet = (triplet, 0, 0)
+      elif len(triplet) == 2:
+        triplet = (triplet[0], triplet[1], 0)
+      else:
+        triplet = (triplet[0], triplet[1], triplet[2])
+
+      bits = (ord(triplet[0]) << 16) | (ord(triplet[1]) << 8) | ord(triplet[2]
+      uu_bytes = [chr(32 + ((bits >> (18 - 6*i)) & 0x3F)) for i in range(4)]
+      code.extend(uu_bytes)
+
+    return "".join(code).encode('UTF-8')
+
   def write_command(self, data):
     '''
     command used to change baud rate
@@ -370,9 +387,13 @@ class Device:
     while pointer < len(data):
       checksum = 0
       for line in range(20):
-        for byte in data[pointer : min(len(data), pointer+45)]: 
-          self.serial.write(byte)
-          checksum += byte
+        chunk = data[pointer : min(len(data), pointer+45)]
+        uu_enc = encode(chunk, 'uu').split("\n")[2]
+        checksum += sum(chunk)
+        pointer += 45
+
+        if len(chunk) < 45 or pointer >= len(data):
+          break
       
       chksum_str = str(checksum).encode('UTF-8')
       self.serial.write(chksum_str + self.eol)
