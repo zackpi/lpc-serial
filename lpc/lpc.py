@@ -6,17 +6,19 @@ class Device:
 
   EXEC_MODES = ["T"]
   RAM_BEGIN = 268435456 
-  RESET_PRGM = b'\x01H\x02I\x01`\xfe\xe7\x0c\xed\x00\xe0\x04\x00\xfa\x05'
 
-  def __init__(self, serial, baud, khz):
-    self.serial = Serial(serial, baud, timeout=1)
+  def __init__(self, port="/dev/ttyUSB0", baud=9600, khz=50000, verbose=True):
+    self.serial = Serial(port, baud, timeout=1)
     self.baud = baud
     self.khz = khz
+    self.verbose = verbose
+    self.echo = True
     self.eol = b"\r\n"
     
   def __enter__(self):
     self.sync()
-    self.echo(False)
+    self.set_echo(False)
+    self.unlock()
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
@@ -69,7 +71,7 @@ class Device:
     #page number: 433
     pass
 
-  def echo(self, on):
+  def set_echo(self, on):
     '''
     whether ISP command handler sends the received serial data back to host
 
@@ -89,7 +91,11 @@ class Device:
     self.serial.write(cmd + self.eol)
 
     sol = cmd + b"\r" if self.echo else b"" 
-    assert self.serial.readline() == sol + b"0" + self.eol, "Failed to change echo settings."
+    reply = self.serial.readline()
+    
+    if self.verbose:
+      print(reply)
+    assert reply == sol + b"0" + self.eol, "Failed to change echo settings."
     self.echo = not self.echo
 
   def erase(self):
@@ -196,9 +202,12 @@ class Device:
     self.serial.write(cmd + self.eol)
 
     sol = cmd + b"\r" if self.echo else b""
-    assert self.serial.readline() == sol + b"0" + self.eol, "Unable to read part ID of target device."
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == sol + b"0" + self.eol, "Unable to read part ID of target device."
 
-    return self.serial.readline() 
+    return self.serial.readline()
 
   def read_uid(self):
     '''
@@ -215,16 +224,16 @@ class Device:
     self.serial.write(cmd + self.eol)
 
     sol = cmd + b"\r" if self.echo else b""
-    assert self.serial.readline() == sol + b"0" + self.eol, "Unable to read UID of target device."
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == sol + b"0" + self.eol, "Unable to read UID of target device."
 
-    return self.serial.readline() 
-
-  def reset(self):
-    self.serial.write(b"U 23130" + self.eol)
-    self.serial.write(b"W " + str(Device.RAM_BEGIN).encode('UTF-8') + b" " + self.eol)
-    self.serial.write(b"0`4@\"20%@_N<,[0#@!`#Z!0``" + self.eol)
-    self.serial.write(b"1462" + self.eol)
-    self.serial.write(b"G " + str(Device.RAM_BEGIN).encode('UTF-8') + b" T" + self.eol)
+    word0 = self.serial.readline() 
+    word1 = self.serial.readline() 
+    word2 = self.serial.readline() 
+    word3 = self.serial.readline()
+    return "".join((word0 + word1 + word2 + word3).decode('UTF-8').split("\r\n"))
 
   def set_baud_rate(self, baud_rate, stop_bit):
     '''
@@ -254,14 +263,23 @@ class Device:
 
     self.serial.write(b"?")
 
-    assert self.serial.readline() == b"Synchronized" + self.eol, "Synchronization failed. No response from target device."
-    self.serial.write(b"Synchronized" + self.eol)
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == b"Synchronized\r\n", "Synchronization failed. No response from target device."
+    self.serial.write(b"Synchronized\r\n")
 
-    clk = str(self.khz).encode('UTF-8')   
-    assert self.serial.readline() == b"Synchronized\rOK" + self.eol, "Synchronization failed. Target aborted synchronization."
-    self.serial.write(clk + self.eol)
+    clk_str = str(self.khz).encode('UTF-8')
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == b"Synchronized\rOK\r\n", "Synchronization failed. Target aborted sync."
+    self.serial.write(clk_str + self.eol)
 
-    assert self.serial.readline() == clk + b"\rOK" + self.eol, "Failed to set clock frequency to %.3f Mhz" % (self.khz / 1000.0)
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == clk_str + b"\rOK" + self.eol, "Failed to set clock to %d Khz" % self.khz
 
   def unlock(self):
     '''
@@ -275,9 +293,10 @@ class Device:
     self.serial.write(cmd + self.eol)
 
     sol = cmd if self.echo else b""
-    ret = self.serial.readline()
-    print("unlock", ret)
-    assert ret == sol + b"0" + self.eol, "Unable to unlock target device." 
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == sol + b"0" + self.eol, "Unable to unlock target device." 
 
   def write_command(self, data):
     '''
@@ -342,24 +361,26 @@ class Device:
     self.serial.write(cmd + self.eol)
 
     sol = cmd + b"\r" if self.echo else b""
-    ret = serial.readline()
-    print(ret)
-    assert ret == sol + "0" + self.eol, "Unable to initiate write to RAM."
-
-    ret = self.readline()
-    print("stop: ", ret)
-    assert int(ret) == ReturnCode.CMD_SUCCESS, "Return code was not CMD_SUCCESS"
+    reply = self.serial.readline()
+    if self.verbose:
+      print(reply)
+    assert reply == sol + b"0" + self.eol, "Unable to initiate write to RAM."
 
     pointer = 0
     while pointer < len(data):
       checksum = 0
-      for byte in data[pointer : min(len(data), pointer+20)]: 
-        self.serial.write(byte)
-        checksum += byte
+      for line in range(20):
+        for byte in data[pointer : min(len(data), pointer+45)]: 
+          self.serial.write(byte)
+          checksum += byte
+      
+      chksum_str = str(checksum).encode('UTF-8')
+      self.serial.write(chksum_str + self.eol)
 
-      self.serial.write(checksum)
-      ret = self.readline()
-      assert ret == "OK", "Invalid checksum"
+      reply = self.serial.readline()
+      if self.verbose:
+        print(reply)
+      assert reply == "OK\r\n", "Invalid checksum. Repeating set of lines."
 
       pointer += 20
 
